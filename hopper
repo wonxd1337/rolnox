@@ -1,0 +1,452 @@
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+
+local localPlayer = Players.LocalPlayer
+local guiEnabled = true
+local isMinimized = false
+local originalSize = UDim2.new(0, 350, 0, 400)
+local minimizedSize = UDim2.new(0, 350, 0, 40)
+
+-- Warna tema
+local themeColors = {
+    background = Color3.fromRGB(30, 30, 40),
+    header = Color3.fromRGB(45, 45, 60),
+    button = Color3.fromRGB(80, 120, 200),
+    buttonHover = Color3.fromRGB(100, 140, 220),
+    text = Color3.fromRGB(240, 240, 240),
+    secondaryText = Color3.fromRGB(180, 180, 200)
+}
+
+-- Mendapatkan Game ID secara otomatis
+local gameId = tostring(game.PlaceId)
+local placeId = game.PlaceId
+
+-- Membuat GUI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ServerHopperGUI"
+ScreenGui.DisplayOrder = 100
+ScreenGui.ResetOnSpawn = false
+
+-- Frame utama
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = originalSize
+MainFrame.Position = UDim2.new(0.5, -175, 0.5, -200)
+MainFrame.BackgroundColor3 = themeColors.background
+MainFrame.BorderSizePixel = 0
+MainFrame.ClipsDescendants = true
+
+-- Membuat rounded corners
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+-- Shadow effect
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Color = Color3.fromRGB(60, 60, 80)
+UIStroke.Thickness = 2
+UIStroke.Parent = MainFrame
+
+-- Header dengan tombol minimize
+local Header = Instance.new("Frame")
+Header.Name = "Header"
+Header.Size = UDim2.new(1, 0, 0, 40)
+Header.Position = UDim2.new(0, 0, 0, 0)
+Header.BackgroundColor3 = themeColors.header
+Header.BorderSizePixel = 0
+
+local HeaderCorner = Instance.new("UICorner")
+HeaderCorner.CornerRadius = UDim.new(0, 8)
+HeaderCorner.Parent = Header
+
+-- Judul
+local Title = Instance.new("TextLabel")
+Title.Name = "Title"
+Title.Size = UDim2.new(0.7, 0, 1, 0)
+Title.Position = UDim2.new(0, 10, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "SERVER HOPPER"
+Title.TextColor3 = themeColors.text
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 16
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = Header
+
+-- Tombol minimize
+local MinimizeButton = Instance.new("TextButton")
+MinimizeButton.Name = "MinimizeButton"
+MinimizeButton.Size = UDim2.new(0, 30, 0, 30)
+MinimizeButton.Position = UDim2.new(1, -40, 0.5, -15)
+MinimizeButton.BackgroundColor3 = themeColors.button
+MinimizeButton.Text = "-"
+MinimizeButton.TextColor3 = themeColors.text
+MinimizeButton.Font = Enum.Font.GothamBold
+MinimizeButton.TextSize = 18
+MinimizeButton.Parent = Header
+
+local MinimizeCorner = Instance.new("UICorner")
+MinimizeCorner.CornerRadius = UDim.new(0, 6)
+MinimizeCorner.Parent = MinimizeButton
+
+-- Konten (akan disembunyikan saat minimized)
+local Content = Instance.new("Frame")
+Content.Name = "Content"
+Content.Size = UDim2.new(1, -20, 1, -60)
+Content.Position = UDim2.new(0, 10, 0, 50)
+Content.BackgroundTransparency = 1
+Content.Parent = MainFrame
+
+-- Tombol refresh
+local RefreshButton = Instance.new("TextButton")
+RefreshButton.Name = "RefreshButton"
+RefreshButton.Size = UDim2.new(1, 0, 0, 40)
+RefreshButton.Position = UDim2.new(0, 0, 0, 0)
+RefreshButton.BackgroundColor3 = themeColors.button
+RefreshButton.Text = "REFRESH SERVERS"
+RefreshButton.TextColor3 = themeColors.text
+RefreshButton.Font = Enum.Font.GothamBold
+RefreshButton.TextSize = 14
+RefreshButton.Parent = Content
+
+local RefreshCorner = Instance.new("UICorner")
+RefreshCorner.CornerRadius = UDim.new(0, 6)
+RefreshCorner.Parent = RefreshButton
+
+-- Loading indicator
+local LoadingLabel = Instance.new("TextLabel")
+LoadingLabel.Name = "LoadingLabel"
+LoadingLabel.Size = UDim2.new(1, 0, 0, 30)
+LoadingLabel.Position = UDim2.new(0, 0, 0, 50)
+LoadingLabel.BackgroundTransparency = 1
+LoadingLabel.Text = "Loading servers..."
+LoadingLabel.TextColor3 = themeColors.secondaryText
+LoadingLabel.Font = Enum.Font.Gotham
+LoadingLabel.TextSize = 14
+LoadingLabel.Visible = false
+LoadingLabel.Parent = Content
+
+-- Daftar server
+local ServersFrame = Instance.new("ScrollingFrame")
+ServersFrame.Name = "ServersFrame"
+ServersFrame.Size = UDim2.new(1, 0, 1, -90)
+ServersFrame.Position = UDim2.new(0, 0, 0, 90)
+ServersFrame.BackgroundTransparency = 1
+ServersFrame.ScrollBarThickness = 4
+ServersFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+ServersFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+ServersFrame.Parent = Content
+
+local ServersLayout = Instance.new("UIListLayout")
+ServersLayout.Padding = UDim.new(0, 8)
+ServersLayout.Parent = ServersFrame
+
+-- Menyusun semua elemen
+Header.Parent = MainFrame
+Content.Parent = MainFrame
+MainFrame.Parent = ScreenGui
+ScreenGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+-- Fungsi untuk mendapatkan server
+local function getServers(placeId, cursor)
+    local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public"
+    url = url .. "?limit=100"
+    
+    if cursor and cursor ~= "" then
+        url = url .. "&cursor=" .. cursor
+    end
+    
+    local success, result = pcall(function()
+        return game:HttpGetAsync(url)
+    end)
+    
+    if success then
+        return HttpService:JSONDecode(result)
+    else
+        return nil
+    end
+end
+
+-- Fungsi untuk teleport ke server
+local function teleportToServer(placeId, jobId)
+    local teleportService = game:GetService("TeleportService")
+    local success, errorMsg = pcall(function()
+        teleportService:TeleportToPlaceInstance(placeId, jobId, localPlayer)
+    end)
+    
+    if not success then
+        warn("Failed to teleport: " .. errorMsg)
+    end
+end
+
+-- Fungsi untuk membuat tombol server
+local function createServerButton(serverData, index)
+    local ServerButton = Instance.new("Frame")
+    ServerButton.Name = "Server" .. index
+    ServerButton.Size = UDim2.new(1, 0, 0, 60)
+    ServerButton.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    
+    local ServerCorner = Instance.new("UICorner")
+    ServerCorner.CornerRadius = UDim.new(0, 6)
+    ServerCorner.Parent = ServerButton
+    
+    -- Server info
+    local ServerInfo = Instance.new("Frame")
+    ServerInfo.Name = "ServerInfo"
+    ServerInfo.Size = UDim2.new(0.7, 0, 1, 0)
+    ServerInfo.Position = UDim2.new(0, 0, 0, 0)
+    ServerInfo.BackgroundTransparency = 1
+    ServerInfo.Parent = ServerButton
+    
+    local ServerName = Instance.new("TextLabel")
+    ServerName.Name = "ServerName"
+    ServerName.Size = UDim2.new(1, -10, 0, 25)
+    ServerName.Position = UDim2.new(0, 10, 0, 5)
+    ServerName.BackgroundTransparency = 1
+    ServerName.Text = "Server #" .. index
+    ServerName.TextColor3 = themeColors.text
+    ServerName.Font = Enum.Font.GothamBold
+    ServerName.TextSize = 14
+    ServerName.TextXAlignment = Enum.TextXAlignment.Left
+    ServerName.Parent = ServerInfo
+    
+    local PlayerCount = Instance.new("TextLabel")
+    PlayerCount.Name = "PlayerCount"
+    PlayerCount.Size = UDim2.new(1, -10, 0, 20)
+    PlayerCount.Position = UDim2.new(0, 10, 0, 30)
+    PlayerCount.BackgroundTransparency = 1
+    PlayerCount.Text = "Players: " .. serverData.playing .. "/" .. serverData.maxPlayers
+    PlayerCount.TextColor3 = themeColors.secondaryText
+    PlayerCount.Font = Enum.Font.Gotham
+    PlayerCount.TextSize = 13
+    PlayerCount.TextXAlignment = Enum.TextXAlignment.Left
+    PlayerCount.Parent = ServerInfo
+    
+    -- Tombol join
+    local JoinButton = Instance.new("TextButton")
+    JoinButton.Name = "JoinButton"
+    JoinButton.Size = UDim2.new(0.25, 0, 0, 40)
+    JoinButton.Position = UDim2.new(0.7, 10, 0.5, -20)
+    JoinButton.BackgroundColor3 = themeColors.button
+    JoinButton.Text = "JOIN"
+    JoinButton.TextColor3 = themeColors.text
+    JoinButton.Font = Enum.Font.GothamBold
+    JoinButton.TextSize = 14
+    JoinButton.Parent = ServerButton
+    
+    local JoinCorner = Instance.new("UICorner")
+    JoinCorner.CornerRadius = UDim.new(0, 6)
+    JoinCorner.Parent = JoinButton
+    
+    -- Efek hover untuk tombol join
+    JoinButton.MouseEnter:Connect(function()
+        JoinButton.BackgroundColor3 = themeColors.buttonHover
+    end)
+    
+    JoinButton.MouseLeave:Connect(function()
+        JoinButton.BackgroundColor3 = themeColors.button
+    end)
+    
+    -- Fungsi klik tombol join
+    JoinButton.MouseButton1Click:Connect(function()
+        teleportToServer(placeId, serverData.id)
+    end)
+    
+    return ServerButton
+end
+
+-- Fungsi untuk refresh server list
+local function refreshServerList()
+    -- Clear existing servers
+    for _, child in ipairs(ServersFrame:GetChildren()) do
+        if child:IsA("Frame") and child.Name:sub(1, 6) == "Server" then
+            child:Destroy()
+        end
+    end
+    
+    LoadingLabel.Visible = true
+    RefreshButton.Text = "LOADING..."
+    
+    -- Mengambil data server
+    task.spawn(function()
+        local allServers = {}
+        local cursor = ""
+        
+        -- Mengambil beberapa halaman server
+        for i = 1, 3 do
+            local serverData = getServers(placeId, cursor)
+            
+            if serverData and serverData.data then
+                for _, server in ipairs(serverData.data) do
+                    table.insert(allServers, server)
+                end
+                
+                cursor = serverData.nextPageCursor or ""
+                if cursor == "" then break end
+            else
+                break
+            end
+        end
+        
+        -- Mengurutkan berdasarkan jumlah pemain (terbanyak dulu)
+        table.sort(allServers, function(a, b)
+            return a.playing > b.playing
+        end)
+        
+        -- Membuat tombol untuk setiap server
+        for i, server in ipairs(allServers) do
+            if i <= 20 then  -- Batasi hingga 20 server untuk performa
+                local serverButton = createServerButton(server, i)
+                serverButton.Parent = ServersFrame
+                task.wait()
+            end
+        end
+        
+        LoadingLabel.Visible = false
+        RefreshButton.Text = "REFRESH SERVERS"
+        
+        if #allServers == 0 then
+            local NoServers = Instance.new("TextLabel")
+            NoServers.Name = "NoServers"
+            NoServers.Size = UDim2.new(1, 0, 0, 50)
+            NoServers.BackgroundTransparency = 1
+            NoServers.Text = "No servers found."
+            NoServers.TextColor3 = themeColors.secondaryText
+            NoServers.Font = Enum.Font.Gotham
+            NoServers.TextSize = 14
+            NoServers.Parent = ServersFrame
+        end
+    end)
+end
+
+-- Fungsi untuk toggle GUI
+local function toggleGUI()
+    guiEnabled = not guiEnabled
+    ScreenGui.Enabled = guiEnabled
+end
+
+-- Fungsi untuk minimize/maximize GUI
+local function toggleMinimize()
+    isMinimized = not isMinimized
+    
+    if isMinimized then
+        MinimizeButton.Text = "+"
+        Content.Visible = false
+        MainFrame.Size = minimizedSize
+    else
+        MinimizeButton.Text = "-"
+        Content.Visible = true
+        MainFrame.Size = originalSize
+    end
+end
+
+-- SISTEM DRAGABLE YANG DIPERBAIKI
+local dragging = false
+local dragStartPos = Vector2.new(0, 0)
+local frameStartPos = UDim2.new(0, 0, 0, 0)
+
+-- Fungsi untuk mulai drag
+local function startDrag()
+    dragging = true
+    dragStartPos = UserInputService:GetMouseLocation()
+    frameStartPos = MainFrame.Position
+end
+
+-- Fungsi untuk stop drag
+local function stopDrag()
+    dragging = false
+end
+
+-- Fungsi untuk update posisi saat drag
+local function updateDrag()
+    if not dragging then return end
+    
+    local mousePos = UserInputService:GetMouseLocation()
+    local delta = mousePos - dragStartPos
+    
+    local newX = frameStartPos.X.Offset + delta.X
+    local newY = frameStartPos.Y.Offset + delta.Y
+    
+    -- Batasi agar tidak keluar dari layar
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    local frameSize = MainFrame.AbsoluteSize
+    
+    newX = math.clamp(newX, 0, viewportSize.X - frameSize.X)
+    newY = math.clamp(newY, 0, viewportSize.Y - frameSize.Y)
+    
+    MainFrame.Position = UDim2.new(0, newX, 0, newY)
+end
+
+-- Event untuk drag pada header
+Header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        startDrag()
+    end
+end)
+
+Header.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        stopDrag()
+    end
+end)
+
+-- Event untuk drag pada title (jika user klik di judul)
+Title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        startDrag()
+    end
+end)
+
+Title.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        stopDrag()
+    end
+end)
+
+-- Update drag setiap frame
+game:GetService("RunService").Heartbeat:Connect(function()
+    if dragging then
+        updateDrag()
+    end
+end)
+
+-- Alternatif: menggunakan RenderStepped untuk responsifitas lebih baik
+-- game:GetService("RunService").RenderStepped:Connect(function()
+--     if dragging then
+--         updateDrag()
+--     end
+-- end)
+
+-- Event handlers
+MinimizeButton.MouseButton1Click:Connect(toggleMinimize)
+RefreshButton.MouseButton1Click:Connect(refreshServerList)
+
+-- Efek hover untuk tombol refresh
+RefreshButton.MouseEnter:Connect(function()
+    RefreshButton.BackgroundColor3 = themeColors.buttonHover
+end)
+
+RefreshButton.MouseLeave:Connect(function()
+    RefreshButton.BackgroundColor3 = themeColors.button
+end)
+
+-- Efek hover untuk tombol minimize
+MinimizeButton.MouseEnter:Connect(function()
+    MinimizeButton.BackgroundColor3 = themeColors.buttonHover
+end)
+
+MinimizeButton.MouseLeave:Connect(function()
+    MinimizeButton.BackgroundColor3 = themeColors.button
+end)
+
+-- Toggle GUI dengan F9
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.F9 then
+        toggleGUI()
+    end
+end)
+
+-- Auto-refresh saat pertama kali dibuka
+task.wait(1)
+refreshServerList()
