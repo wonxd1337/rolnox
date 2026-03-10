@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Movable Type Mass Scanner & Exploiter v7.0 - SUPER FAST
-Hanya scan /rsd.xml - Upgrade hanya vuln jika HTTP 200
-"""
-
 import requests
 import argparse
 import sys
@@ -66,8 +60,8 @@ class MTExploiter:
             'total_domains': 0,
             'unique_domains': 0,
             'mt_found': [],        # (domain, rsd_url, xmlrpc_url, version, response_time)
-            'vuln_xmlrpc': [],     # (domain, xmlrpc_url, response, status_code)
-            'vuln_upgrade': [],    # (domain, upgrade_url, version, status_code)
+            'vuln_xmlrpc': [],     # (domain, xmlrpc_url, response, status_code, message)
+            'vuln_upgrade': [],    # (domain, upgrade_url, version, status_code, message)
             'not_vuln': []         # (domain, reason)
         }
         
@@ -348,6 +342,8 @@ class MTExploiter:
         if not found:
             print(f"{Colors.DIM}  - {domain} [{(resp_time*1000):.0f}ms]{Colors.RESET}")
             print(f"    RSD : Not Found")
+            with self.lock:
+                self.results['not_vuln'].append((domain, "RSD Not Found"))
             return
         
         # RSD ditemukan
@@ -368,9 +364,11 @@ class MTExploiter:
                 else:
                     print(f"{Colors.YELLOW}    mt-xmlrpc.cgi : POTENSIAL [HTTP {status}]{Colors.RESET}")
                 with self.lock:
-                    self.results['vuln_xmlrpc'].append((domain, xmlrpc_url, output, status))
+                    self.results['vuln_xmlrpc'].append((domain, xmlrpc_url, output, status, message))
             else:
                 print(f"{Colors.DIM}    mt-xmlrpc.cgi : Not Vuln [HTTP {status}]{Colors.RESET}")
+                with self.lock:
+                    self.results['not_vuln'].append((domain, f"XML-RPC Not Vuln - HTTP {status}"))
         
         # CEK UPGRADE - HANYA UNTUK VERSI 4.x
         if self.is_version_4(version):
@@ -383,11 +381,15 @@ class MTExploiter:
                 if vuln and status == 200:
                     print(f"{Colors.RED}    mt-upgrade.cgi : VULN [HTTP {status}] (Versi 4.x){Colors.RESET}")
                     with self.lock:
-                        self.results['vuln_upgrade'].append((domain, upgrade_url, version, status))
+                        self.results['vuln_upgrade'].append((domain, upgrade_url, version, status, message))
                 else:
                     print(f"{Colors.DIM}    mt-upgrade.cgi : Not Vuln [HTTP {status}] (Versi 4.x){Colors.RESET}")
+                    with self.lock:
+                        self.results['not_vuln'].append((domain, f"Upgrade Not Vuln - HTTP {status}"))
             else:
                 print(f"{Colors.DIM}    mt-upgrade.cgi : Not Found (Versi 4.x){Colors.RESET}")
+                with self.lock:
+                    self.results['not_vuln'].append((domain, "Upgrade Not Found"))
         else:
             print(f"{Colors.DIM}    mt-upgrade.cgi : Skip (bukan 4.x){Colors.RESET}")
     
@@ -408,6 +410,8 @@ class MTExploiter:
                     self.process_domain(domain)
             else:
                 print(f"{Colors.YELLOW}    No domains found{Colors.RESET}")
+                with self.lock:
+                    self.results['not_vuln'].append((target, "No domains found from reverse IP"))
         else:
             # Domain - langsung process
             ip = self.domain_to_ip(target)
@@ -434,43 +438,127 @@ class MTExploiter:
     # ============ OUTPUT ============
     
     def save_results(self):
-        """Simpan hasil"""
+        """Simpan hasil dengan LENGKAP"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"mt_fast_{timestamp}.txt"
         
         with open(filename, 'w') as f:
+            f.write("="*80 + "\n")
             f.write("MOVABLE TYPE FAST SCAN RESULTS\n")
             f.write(f"Generated: {datetime.now()}\n")
-            f.write(f"Total Targets: {self.results['total_targets']}\n\n")
+            f.write(f"Total Targets: {self.results['total_targets']}\n")
+            f.write(f"Total Domains Found: {self.results['total_domains']}\n")
+            f.write(f"Unique Domains: {len(self.processed_domains)}\n")
+            f.write("="*80 + "\n\n")
             
+            # 1. XML-RPC VULNERABLE
             if self.results['vuln_xmlrpc']:
-                f.write("\n[!] XML-RPC VULN/POTENSIAL\n")
-                for domain, url, _, status in self.results['vuln_xmlrpc']:
-                    f.write(f"{domain} | {url} | HTTP {status}\n")
+                f.write("\n[!] XML-RPC VULNERABLE / POTENSIAL\n")
+                f.write("-"*60 + "\n")
+                for i, (domain, url, output, status, message) in enumerate(self.results['vuln_xmlrpc'], 1):
+                    f.write(f"\n{i}. {domain}\n")
+                    f.write(f"   URL     : {url}\n")
+                    f.write(f"   Status  : HTTP {status}\n")
+                    f.write(f"   Message : {message}\n")
+                    if output and len(output) > 10:
+                        f.write(f"   Output  : {output[:200]}{'...' if len(output) > 200 else ''}\n")
             
+            # 2. UPGRADE VULNERABLE (Versi 4.x)
             if self.results['vuln_upgrade']:
-                f.write("\n[!] UPGRADE VULN (Versi 4.x)\n")
-                for domain, url, version, status in self.results['vuln_upgrade']:
-                    f.write(f"{domain} | {url} | v{version} | HTTP {status}\n")
+                f.write("\n[!] UPGRADE VULNERABLE (Versi 4.x)\n")
+                f.write("-"*60 + "\n")
+                for i, (domain, url, version, status, message) in enumerate(self.results['vuln_upgrade'], 1):
+                    f.write(f"\n{i}. {domain}\n")
+                    f.write(f"   Version : {version}\n")
+                    f.write(f"   URL     : {url}\n")
+                    f.write(f"   Status  : HTTP {status}\n")
+                    f.write(f"   Message : {message}\n")
+            
+            # 3. SEMUA SITE MT DITEMUKAN
+            if self.results['mt_found']:
+                f.write("\n[+] SEMUA SITE MOVABLE TYPE DITEMUKAN\n")
+                f.write("-"*60 + "\n")
+                for i, (domain, rsd_url, xmlrpc_url, version, resp_time) in enumerate(self.results['mt_found'], 1):
+                    f.write(f"\n{i}. {domain}\n")
+                    f.write(f"   Version  : {version}\n")
+                    f.write(f"   RSD      : {rsd_url}\n")
+                    f.write(f"   XML-RPC  : {xmlrpc_url}\n")
+                    f.write(f"   Response : {resp_time*1000:.0f}ms\n")
+            
+            # 4. RINGKASAN
+            f.write("\n" + "="*80 + "\n")
+            f.write("RINGKASAN\n")
+            f.write("="*80 + "\n")
+            f.write(f"Total Targets      : {self.results['total_targets']}\n")
+            f.write(f"Total Domains      : {self.results['total_domains']}\n")
+            f.write(f"Unique Domains     : {len(self.processed_domains)}\n")
+            f.write(f"MT Sites Found     : {len(self.results['mt_found'])}\n")
+            f.write(f"XML-RPC Vuln       : {len(self.results['vuln_xmlrpc'])}\n")
+            f.write(f"Upgrade Vuln       : {len(self.results['vuln_upgrade'])} (4.x only)\n")
         
-        print(f"\n{Colors.GREEN}[✓] Hasil: {filename}{Colors.RESET}")
+        print(f"\n{Colors.GREEN}[✓] Hasil lengkap disimpan di: {filename}{Colors.RESET}")
+        
+        # Juga simpan dalam format JSON
+        json_filename = f"mt_fast_{timestamp}.json"
+        with open(json_filename, 'w') as f:
+            json.dump({
+                'timestamp': str(datetime.now()),
+                'total_targets': self.results['total_targets'],
+                'total_domains': self.results['total_domains'],
+                'unique_domains': len(self.processed_domains),
+                'mt_found': [
+                    {
+                        'domain': d,
+                        'rsd_url': r,
+                        'xmlrpc_url': x,
+                        'version': v,
+                        'response_time_ms': rt*1000
+                    } for d, r, x, v, rt in self.results['mt_found']
+                ],
+                'vuln_xmlrpc': [
+                    {
+                        'domain': d,
+                        'url': u,
+                        'status_code': s,
+                        'message': m,
+                        'output_preview': o[:200] if o else ''
+                    } for d, u, o, s, m in self.results['vuln_xmlrpc']
+                ],
+                'vuln_upgrade': [
+                    {
+                        'domain': d,
+                        'url': u,
+                        'version': v,
+                        'status_code': s,
+                        'message': m
+                    } for d, u, v, s, m in self.results['vuln_upgrade']
+                ]
+            }, f, indent=2)
+        
+        print(f"{Colors.GREEN}[✓] JSON juga disimpan di: {json_filename}{Colors.RESET}")
     
     def print_summary(self):
         """Ringkasan"""
-        print(f"\n{Colors.BOLD}{'='*50}{Colors.RESET}")
+        vuln_xmlrpc_count = len(self.results['vuln_xmlrpc'])
+        vuln_upgrade_count = len(self.results['vuln_upgrade'])
+        mt_sites_count = len(self.results['mt_found'])
+        
+        print(f"\n{Colors.BOLD}{'='*60}{Colors.RESET}")
         print(f"{Colors.BOLD}SUMMARY{Colors.RESET}")
-        print(f"{Colors.BOLD}{'='*50}{Colors.RESET}")
-        print(f"Targets    : {self.results['total_targets']}")
-        print(f"MT Sites   : {len(self.results['mt_found'])}")
-        print(f"XML-RPC    : {len(self.results['vuln_xmlrpc'])}")
-        print(f"Upgrade    : {len(self.results['vuln_upgrade'])} (4.x only)")
-        print(f"{Colors.BOLD}{'='*50}{Colors.RESET}")
+        print(f"{Colors.BOLD}{'='*60}{Colors.RESET}")
+        print(f"Total Targets      : {self.results['total_targets']}")
+        print(f"Total Domains      : {self.results['total_domains']}")
+        print(f"Unique Domains     : {len(self.processed_domains)}")
+        print(f"MT Sites Found     : {mt_sites_count}")
+        print(f"XML-RPC Vuln       : {vuln_xmlrpc_count}")
+        print(f"Upgrade Vuln       : {vuln_upgrade_count} (4.x only)")
+        print(f"{Colors.BOLD}{'='*60}{Colors.RESET}")
 
 def main():
     parser = argparse.ArgumentParser(description='MT Scanner v7.0 - SUPER FAST')
-    parser.add_argument('-d', '--domain', help='Domain target')
-    parser.add_argument('-i', '--ip', help='IP target')
-    parser.add_argument('-f', '--file', help='File targets')
+    parser.add_argument('-d', '--domain', help='Domain target (pisah dengan koma)')
+    parser.add_argument('-i', '--ip', help='IP target (pisah dengan koma)')
+    parser.add_argument('-f', '--file', help='File berisi daftar target')
     parser.add_argument('-t', '--threads', type=int, default=100, help='Threads (default: 100)')
     parser.add_argument('--timeout', type=int, default=5, help='Timeout (default: 5)')
     
@@ -479,14 +567,19 @@ def main():
     targets = []
     if args.domain:
         targets = [d.strip() for d in args.domain.split(',')]
+        print(f"{Colors.GREEN}[+] Loaded {len(targets)} domain targets{Colors.RESET}")
     elif args.ip:
         targets = [i.strip() for i in args.ip.split(',')]
+        print(f"{Colors.GREEN}[+] Loaded {len(targets)} IP targets{Colors.RESET}")
     elif args.file:
         with open(args.file) as f:
-            targets = [line.strip() for line in f if line.strip()]
+            targets = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        print(f"{Colors.GREEN}[+] Loaded {len(targets)} targets from {args.file}{Colors.RESET}")
     
     if not targets:
-        print("Usage: python mt_scanner.py -d yen-shop.com")
+        print("Usage: python index.py -d yen-shop.com")
+        print("       python index.py -i 8.8.8.8,1.1.1.1")
+        print("       python index.py -f targets.txt")
         sys.exit(1)
     
     scanner = MTExploiter(threads=args.threads, timeout=args.timeout)
