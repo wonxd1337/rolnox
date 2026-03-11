@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Movable Type Multi Reverse IP Scanner v2.0
+Movable Type Multi IP/Domain Scanner v3.1
+- Bisa input IP atau Domain (OTOMATIS, tanpa konfirmasi)
 - Reverse IP dari multiple sources
 - Cari /rsd.xml untuk deteksi Movable Type
 - Extract mt-xmlrpc.cgi & mt-upgrade.cgi
@@ -39,10 +40,11 @@ class Colors:
     BOLD = '\033[1m'
     DIM = '\033[2m'
 
-class MTReverseIPScanner:
-    def __init__(self, threads: int = 50, timeout: int = 5):
+class MTScanner:
+    def __init__(self, threads: int = 50, timeout: int = 5, enable_reverse_ip: bool = True):
         self.threads = threads
         self.timeout = timeout
+        self.enable_reverse_ip = enable_reverse_ip
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -53,10 +55,11 @@ class MTReverseIPScanner:
         
         # Set untuk menyimpan domain yang sudah diproses (menghindari duplikat)
         self.processed_domains = set()
+        self.processed_ips = set()
         
         # Hasil
         self.results = {
-            'total_ips': 0,
+            'total_targets': 0,
             'total_domains': 0,
             'unique_domains': 0,
             'movable_type_sites': [],      # (domain, version, rsd_url)
@@ -77,8 +80,9 @@ class MTReverseIPScanner:
     def print_banner(self):
         banner = f"""
 {Colors.CYAN}╔══════════════════════════════════════════════════════════════╗
-║     Movable Type Multi Reverse IP Scanner v2.0            ║
-║     Filter: XML-RPC(403/405/411) | Upgrade(200, v4.x)     ║
+║     Movable Type Multi IP/Domain Scanner v3.1              ║
+║     OTOMATIS - Tanpa Konfirmasi | Support IP & Domain      ║
+║     Filter: XML-RPC(403/405/411) | Upgrade(200, v4.x)      ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.RESET}
         """
         print(banner)
@@ -93,6 +97,24 @@ class MTReverseIPScanner:
     def is_valid_ip(self, ip: str) -> bool:
         """Validasi IP address"""
         return bool(re.match(r'^\d+\.\d+\.\d+\.\d+$', ip))
+    
+    def domain_to_ip(self, domain: str) -> Optional[str]:
+        """Konversi domain ke IP address"""
+        try:
+            # Bersihkan domain
+            domain = domain.lower().strip()
+            domain = re.sub(r'^https?://', '', domain)
+            domain = domain.split('/')[0]
+            
+            # Cek apakah sudah berupa IP
+            if self.is_valid_ip(domain):
+                return domain
+            
+            # Resolve domain ke IP
+            ip = socket.gethostbyname(domain)
+            return ip
+        except:
+            return None
     
     # ============ REVERSE IP FUNCTIONS ============
     
@@ -160,7 +182,7 @@ class MTReverseIPScanner:
         """Mengumpulkan domain dari semua sumber reverse IP"""
         all_domains = set()
         
-        print(f"{Colors.CYAN}    [Reverse IP] Mengumpulkan domain...{Colors.RESET}")
+        print(f"{Colors.CYAN}    [Reverse IP] Mengumpulkan domain dari {ip}...{Colors.RESET}")
         
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
@@ -248,10 +270,10 @@ class MTReverseIPScanner:
     
     # ============ PROCESSING FUNCTIONS ============
     
-    def process_domain(self, domain: str, source_ip: str = ""):
+    def process_domain(self, domain: str, source: str = "direct"):
         """Process satu domain untuk deteksi Movable Type"""
         
-        # Cek duplikat
+        # Cek duplikat domain
         if domain in self.processed_domains:
             return
         
@@ -266,7 +288,8 @@ class MTReverseIPScanner:
             return
         
         # Movable Type ditemukan
-        print(f"{Colors.GREEN}  ✓ {domain} - MT v{version}{Colors.RESET}")
+        version_display = f"v{version}" if version != "Unknown" else "Unknown"
+        print(f"{Colors.GREEN}  ✓ {domain} - MT {version_display}{Colors.RESET}")
         
         with self.lock:
             self.results['movable_type_sites'].append((domain, version, rsd_url))
@@ -303,9 +326,14 @@ class MTReverseIPScanner:
     
     def process_ip(self, ip: str):
         """Process satu IP address"""
+        # Cek duplikat IP
+        if ip in self.processed_ips:
+            return
+        
         with self.lock:
-            self.results['total_ips'] += 1
-            current = self.results['total_ips']
+            self.processed_ips.add(ip)
+            self.results['total_targets'] += 1
+            current = self.results['total_targets']
         
         print(f"\n{Colors.CYAN}[{current}] Scanning IP: {ip}{Colors.RESET}")
         
@@ -316,40 +344,69 @@ class MTReverseIPScanner:
             print(f"{Colors.YELLOW}    No domains found for this IP{Colors.RESET}")
             return
         
-        print(f"{Colors.GREEN}    Total unique domains: {len(domains)}{Colors.RESET}")
+        print(f"{Colors.GREEN}    Found {len(domains)} unique domains{Colors.RESET}")
         
         # Process setiap domain
         for domain in domains:
-            self.process_domain(domain, ip)
+            self.process_domain(domain, f"reverse_ip:{ip}")
     
-    def scan_ips(self, ips: List[str]):
-        """Scan multiple IPs"""
-        print(f"\n{Colors.BOLD}[+] Memulai scan {len(ips)} IP addresses{Colors.RESET}")
+    def process_target(self, target: str):
+        """Process satu target (bisa IP atau domain)"""
+        
+        if self.is_valid_ip(target):
+            # Target adalah IP
+            self.process_ip(target)
+        else:
+            # Target adalah domain
+            with self.lock:
+                self.results['total_targets'] += 1
+                current = self.results['total_targets']
+            
+            # Coba resolve IP untuk info
+            ip = self.domain_to_ip(target)
+            ip_info = f" [{ip}]" if ip else ""
+            
+            print(f"\n{Colors.CYAN}[{current}] Scanning Domain: {target}{ip_info}{Colors.RESET}")
+            
+            # Langsung process domain
+            self.process_domain(target, "direct")
+            
+            # OTOMATIS lakukan reverse IP jika enabled dan IP ditemukan
+            if self.enable_reverse_ip and ip:
+                print(f"{Colors.DIM}    Auto reverse IP dari {ip}...{Colors.RESET}")
+                self.process_ip(ip)
+    
+    def scan_targets(self, targets: List[str]):
+        """Scan multiple targets (bisa IP atau domain)"""
+        print(f"\n{Colors.BOLD}[+] Memulai scan {len(targets)} targets{Colors.RESET}")
         print(f"[+] Threads: {self.threads}")
-        print(f"[+] Timeout: {self.timeout}s\n")
+        print(f"[+] Timeout: {self.timeout}s")
+        if self.enable_reverse_ip:
+            print(f"[+] Auto Reverse IP: ENABLED (otomatis untuk domain)")
+        print("")
         
         with ThreadPoolExecutor(max_workers=self.threads) as executor:
-            futures = {executor.submit(self.process_ip, ip): ip for ip in ips}
+            futures = {executor.submit(self.process_target, target): target for target in targets}
             
             for future in as_completed(futures):
                 try:
                     future.result()
                 except Exception as e:
-                    ip = futures[future]
-                    print(f"{Colors.RED}[!] Error scanning {ip}: {str(e)[:50]}{Colors.RESET}")
+                    target = futures[future]
+                    print(f"{Colors.RED}[!] Error scanning {target}: {str(e)[:50]}{Colors.RESET}")
     
     # ============ OUTPUT FUNCTIONS ============
     
     def save_results(self):
         """Simpan hasil ke file"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"mt_reverse_ip_{timestamp}.txt"
+        filename = f"mt_scan_{timestamp}.txt"
         
         with open(filename, 'w') as f:
             f.write("="*80 + "\n")
-            f.write("MOVABLE TYPE REVERSE IP SCAN RESULTS\n")
+            f.write("MOVABLE TYPE SCAN RESULTS\n")
             f.write(f"Generated: {datetime.now()}\n")
-            f.write(f"Total IPs Scanned: {self.results['total_ips']}\n")
+            f.write(f"Total Targets: {self.results['total_targets']}\n")
             f.write(f"Total Domains Found: {self.results['total_domains']}\n")
             f.write(f"Unique Domains: {len(self.processed_domains)}\n")
             f.write("="*80 + "\n\n")
@@ -384,9 +441,9 @@ class MTReverseIPScanner:
                     f.write(f"RSD     : {rsd_url}\n")
                     f.write("-"*40 + "\n")
         
-        print(f"\n{Colors.GREEN}[✓] Hasil disimpan di: {filename}{Colors.RESET}")
+        print(f"\n{Colors.GREEN}[✓] Hasil lengkap disimpan di: {filename}{Colors.RESET}")
         
-        # Juga simpan list sederhana untuk langsung digunakan
+        # Simpan list filtered URLs ke file terpisah
         self.save_filtered_lists(timestamp)
     
     def save_filtered_lists(self, timestamp: str):
@@ -394,73 +451,94 @@ class MTReverseIPScanner:
         
         # XML-RPC list (403,405,411)
         if self.results['filtered_xmlrpc']:
-            xmlrpc_file = f"xmlrpc_filtered_{timestamp}.txt"
+            xmlrpc_file = f"xmlrpc_targets_{timestamp}.txt"
             with open(xmlrpc_file, 'w') as f:
                 for domain, url, status in self.results['filtered_xmlrpc']:
                     f.write(f"{url}\n")
-            print(f"{Colors.GREEN}[✓] XML-RPC list: {xmlrpc_file} ({len(self.results['filtered_xmlrpc'])} URLs){Colors.RESET}")
+            print(f"{Colors.GREEN}[✓] XML-RPC targets: {xmlrpc_file} ({len(self.results['filtered_xmlrpc'])} URLs){Colors.RESET}")
         
         # Upgrade list (HTTP 200, v4.x)
         if self.results['filtered_upgrade']:
-            upgrade_file = f"upgrade_filtered_{timestamp}.txt"
+            upgrade_file = f"upgrade_targets_{timestamp}.txt"
             with open(upgrade_file, 'w') as f:
                 for domain, url, version in self.results['filtered_upgrade']:
                     f.write(f"{url}\n")
-            print(f"{Colors.GREEN}[✓] Upgrade list: {upgrade_file} ({len(self.results['filtered_upgrade'])} URLs){Colors.RESET}")
+            print(f"{Colors.GREEN}[✓] Upgrade targets: {upgrade_file} ({len(self.results['filtered_upgrade'])} URLs){Colors.RESET}")
     
     def print_summary(self):
         """Print ringkasan hasil"""
         print(f"\n{Colors.BOLD}{'='*60}{Colors.RESET}")
         print(f"{Colors.BOLD}SUMMARY{Colors.RESET}")
         print(f"{Colors.BOLD}{'='*60}{Colors.RESET}")
-        print(f"Total IPs Scanned      : {self.results['total_ips']}")
-        print(f"Total Domains Found    : {self.results['total_domains']}")
-        print(f"Unique Domains         : {len(self.processed_domains)}")
-        print(f"MT Sites Found         : {len(self.results['movable_type_sites'])}")
+        print(f"Total Targets Scanned : {self.results['total_targets']}")
+        print(f"Total Domains Found   : {self.results['total_domains']}")
+        print(f"Unique Domains        : {len(self.processed_domains)}")
+        print(f"MT Sites Found        : {len(self.results['movable_type_sites'])}")
         print(f"\n{Colors.YELLOW}FILTERED RESULTS:{Colors.RESET}")
-        print(f"XML-RPC (403/405/411)  : {len(self.results['filtered_xmlrpc'])}")
-        print(f"Upgrade (200, v4.x)    : {len(self.results['filtered_upgrade'])}")
+        print(f"XML-RPC (403/405/411) : {len(self.results['filtered_xmlrpc'])}")
+        print(f"Upgrade (200, v4.x)   : {len(self.results['filtered_upgrade'])}")
         print(f"{Colors.BOLD}{'='*60}{Colors.RESET}")
 
-def load_ips(file_path: str) -> List[str]:
-    """Load IPs dari file"""
-    ips = []
+def load_targets(file_path: str) -> List[str]:
+    """Load targets dari file (bisa IP atau domain)"""
+    targets = []
     try:
         with open(file_path, 'r') as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#'):
-                    # Validasi IP sederhana
-                    if re.match(r'^\d+\.\d+\.\d+\.\d+$', line):
-                        ips.append(line)
-        print(f"{Colors.GREEN}[+] Loaded {len(ips)} IPs from {file_path}{Colors.RESET}")
+                    targets.append(line)
+        print(f"{Colors.GREEN}[+] Loaded {len(targets)} targets from {file_path}{Colors.RESET}")
     except Exception as e:
         print(f"{Colors.RED}[!] Error loading file: {e}{Colors.RESET}")
         sys.exit(1)
-    return ips
+    return targets
 
 def main():
-    parser = argparse.ArgumentParser(description='Movable Type Multi Reverse IP Scanner v2.0')
-    parser.add_argument('-f', '--file', required=True, help='File berisi daftar IP')
+    parser = argparse.ArgumentParser(description='Movable Type Multi IP/Domain Scanner v3.1 - OTOMATIS')
+    
+    # Input options
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument('-f', '--file', help='File berisi daftar target (IP/domain)')
+    input_group.add_argument('-i', '--ip', help='IP address atau multiple IP (pisah dengan koma)')
+    input_group.add_argument('-d', '--domain', help='Domain atau multiple domain (pisah dengan koma)')
+    input_group.add_argument('-m', '--mixed', help='Campuran IP dan domain (pisah dengan koma)')
+    
     parser.add_argument('-t', '--threads', type=int, default=50, help='Jumlah thread (default: 50)')
     parser.add_argument('--timeout', type=int, default=5, help='Timeout per request (default: 5)')
+    parser.add_argument('--no-reverse', action='store_true', help='Nonaktifkan auto reverse IP untuk domain')
     
     args = parser.parse_args()
     
-    scanner = MTReverseIPScanner(
+    # Kumpulkan targets
+    targets = []
+    
+    if args.file:
+        targets = load_targets(args.file)
+    elif args.ip:
+        targets = [t.strip() for t in args.ip.split(',') if t.strip()]
+        print(f"{Colors.GREEN}[+] Loaded {len(targets)} IP targets{Colors.RESET}")
+    elif args.domain:
+        targets = [t.strip() for t in args.domain.split(',') if t.strip()]
+        print(f"{Colors.GREEN}[+] Loaded {len(targets)} domain targets{Colors.RESET}")
+    elif args.mixed:
+        targets = [t.strip() for t in args.mixed.split(',') if t.strip()]
+        print(f"{Colors.GREEN}[+] Loaded {len(targets)} mixed targets{Colors.RESET}")
+    
+    if not targets:
+        print(f"{Colors.RED}[!] No valid targets{Colors.RESET}")
+        sys.exit(1)
+    
+    scanner = MTScanner(
         threads=args.threads,
-        timeout=args.timeout
+        timeout=args.timeout,
+        enable_reverse_ip=not args.no_reverse
     )
     
     scanner.print_banner()
     
-    ips = load_ips(args.file)
-    if not ips:
-        print(f"{Colors.RED}[!] No valid IPs loaded{Colors.RESET}")
-        sys.exit(1)
-    
     start_time = time.time()
-    scanner.scan_ips(ips)
+    scanner.scan_targets(targets)
     elapsed_time = time.time() - start_time
     
     scanner.save_results()
