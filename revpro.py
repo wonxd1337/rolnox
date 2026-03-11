@@ -120,7 +120,7 @@ class MovableTypeScanner:
     
     def check_rsd_xml(self, domain):
         """Memeriksa keberadaan rsd.xml"""
-        paths = ['/rsd.xml', '/blog/rsd.xml', '/wp/rsd.xml', '/wordpress/rsd.xml']
+        paths = ['/rsd.xml', '/blog/rsd.xml']
         
         for path in paths:
             try:
@@ -171,7 +171,7 @@ class MovableTypeScanner:
                     info['version'] = version_match.group(1)
         
         # Cari API link (mt-xmlrpc.cgi)
-        api_match = re.search(r'<apiLink>(.+?)</apiLink>', rsd_content, re.IGNORECASE)
+        api_match = re.search(r'<api[^>]*apiLink="([^"]+)"[^>]*>', rsd_content, re.IGNORECASE)
         if api_match:
             info['api_link'] = api_match.group(1).strip()
             
