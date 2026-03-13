@@ -346,7 +346,7 @@ class MovableTypeScanner:
 
 def download_proxy_list():
     """Download proxy list dari GitHub langsung ke memory"""
-    proxy_url = "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/all/data.txt"
+    proxy_url = "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/https/data.txt"
     
     try:
         print("[*] Mendownload proxy list...")
